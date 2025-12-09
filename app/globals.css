@@ -1,0 +1,70 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --color-primary: #1FA033;
+    --color-primary-dark: #148026;
+    --color-accent: #2BC041;
+    --color-success: #30D148;
+    --color-warning: #FFC107;
+    --color-danger: #E74C3C;
+    --color-gray-100: #F5F5F5;
+    --color-gray-800: #333333;
+    --color-white: #FFFFFF;
+  }
+
+  * {
+    @apply border-gray-200;
+  }
+
+  body {
+    @apply bg-gray-100 text-gray-800 font-body;
+  }
+
+  h1, h2, h3, h4, h5, h6 {
+    @apply font-heading;
+  }
+}
+
+@layer utilities {
+  /* Modern card hover effects */
+  .card-hover {
+    @apply transition-all duration-300 hover:shadow-lg hover:-translate-y-0.5;
+  }
+
+  /* Gradient backgrounds */
+  .gradient-primary {
+    background: linear-gradient(135deg, #1FA033 0%, #2BC041 100%);
+  }
+
+  .gradient-success {
+    background: linear-gradient(135deg, #30D148 0%, #2BC041 100%);
+  }
+
+  /* Glassmorphism effect */
+  .glass {
+    @apply bg-white/80 backdrop-blur-sm;
+  }
+}
+
+/* Mapbox Popup Custom Styling */
+.mapboxgl-popup-content {
+  @apply rounded-xl shadow-lg border border-gray-200 p-0;
+  font-family: Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  min-width: 200px;
+}
+
+.mapboxgl-popup-tip {
+  border-top-color: white;
+}
+
+.mapboxgl-popup-close-button {
+  @apply text-gray-400 hover:text-gray-600;
+  font-size: 20px;
+  padding: 8px;
+  right: 4px;
+  top: 4px;
+}
+
