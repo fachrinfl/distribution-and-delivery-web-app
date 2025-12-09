@@ -344,11 +344,15 @@ async function seedEmployees(regions: any[]) {
       authUserId = existingEmployee.auth_user_id;
       // Update password for existing auth user
       try {
-        await retryOperation(() =>
-          supabase.auth.admin.updateUserById(authUserId!, {
-            password: "password123",
-          })
-        );
+        await retryOperation(async () => {
+          const { error } = await supabase.auth.admin.updateUserById(
+            authUserId!,
+            {
+              password: "password123",
+            }
+          );
+          if (error) throw error;
+        });
       } catch (updateError) {
         console.warn(
           `Could not update password for ${emp.email}, continuing...`
@@ -496,8 +500,8 @@ async function seedCustomers(regions: any[], salesEmployees: any[]) {
       ])} No. ${randomInt(1, 999)}, ${city.name}`;
 
       try {
-        const result = await retryOperation(() =>
-          supabase
+        const result = await retryOperation(async () => {
+          const { data, error } = await supabase
             .from("customers")
             .insert({
               name: businessName,
@@ -508,8 +512,10 @@ async function seedCustomers(regions: any[], salesEmployees: any[]) {
               region_id: region.id,
             })
             .select()
-            .single()
-        );
+            .single();
+
+          return { data, error };
+        });
 
         if (result.error) {
           console.error(`Error creating customer:`, result.error);
@@ -555,16 +561,20 @@ async function seedRoutes(salesEmployees: any[], customers: any[]) {
       if (salesCustomers.length === 0) continue;
 
       try {
-        const { data: route, error: routeError } = await retryOperation(() =>
-          supabase
+        const result = await retryOperation(async () => {
+          const { data, error } = await supabase
             .from("routes")
             .insert({
               date: dateStr,
               salesperson_id: sales.id,
             })
             .select()
-            .single()
-        );
+            .single();
+          return { data, error };
+        });
+
+        const route = result.data;
+        const routeError = result.error;
 
         if (routeError && !routeError.message.includes("duplicate key")) {
           console.error(`Error creating route:`, routeError);
@@ -579,9 +589,12 @@ async function seedRoutes(salesEmployees: any[], customers: any[]) {
             visit_order: index + 1,
           }));
 
-          await retryOperation(() =>
-            supabase.from("route_customers").insert(routeCustomers)
-          );
+          await retryOperation(async () => {
+            const { error } = await supabase
+              .from("route_customers")
+              .insert(routeCustomers);
+            if (error) throw error;
+          });
           routes.push(route);
         }
       } catch (error) {
@@ -689,8 +702,8 @@ async function seedDeliveries(routes: any[], customers: any[]) {
       }
 
       try {
-        await retryOperation(() =>
-          supabase.from("deliveries").insert({
+        await retryOperation(async () => {
+          const { error } = await supabase.from("deliveries").insert({
             route_id: route.id,
             customer_id: customer.id,
             status,
@@ -700,8 +713,9 @@ async function seedDeliveries(routes: any[], customers: any[]) {
             delivered_at: deliveredAt,
             delivered_latitude: deliveredLat,
             delivered_longitude: deliveredLng,
-          })
-        );
+          });
+          if (error) throw error;
+        });
       } catch (error) {
         console.error(`Error creating delivery after retries:`, error);
         continue;
@@ -751,8 +765,8 @@ async function seedAttendances(salesEmployees: any[]) {
       const baseLng = 106.8456;
 
       try {
-        await retryOperation(() =>
-          supabase.from("attendances").upsert(
+        await retryOperation(async () => {
+          const { error } = await supabase.from("attendances").upsert(
             {
               employee_id: sales.id,
               date: dateStr,
@@ -768,8 +782,9 @@ async function seedAttendances(salesEmployees: any[]) {
                 : null,
             },
             { onConflict: "employee_id,date" }
-          )
-        );
+          );
+          if (error) throw error;
+        });
       } catch (error) {
         console.error(`Error creating attendance after retries:`, error);
         continue;

@@ -14,6 +14,7 @@ export interface Customer {
   latitude: number;
   longitude: number;
   phone?: string;
+  region?: string;
 }
 
 export interface Delivery {
