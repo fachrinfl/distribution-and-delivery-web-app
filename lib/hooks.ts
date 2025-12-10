@@ -1,6 +1,6 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query"
 import { api } from "./api"
-import type { Employee, Customer, Route, Delivery } from "./mock-data"
+import type { Employee, Customer, Route, Delivery, ActivityLog } from "./mock-data"
 
 // Employees
 export const useEmployees = () => {
@@ -122,6 +122,18 @@ export const useAttendances = (date?: string) => {
   return useQuery({
     queryKey: ["attendances", date],
     queryFn: () => api.getAttendances(date),
+  })
+}
+
+// Activity Logs
+export const useActivityLogsByEmployeeAndDate = (
+  employeeId: string,
+  date: string
+) => {
+  return useQuery({
+    queryKey: ["activityLogs", employeeId, date],
+    queryFn: () => api.getActivityLogsByEmployeeAndDate(employeeId, date),
+    enabled: !!employeeId && !!date,
   })
 }
 

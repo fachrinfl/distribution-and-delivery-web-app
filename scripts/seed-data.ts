@@ -797,6 +797,446 @@ async function seedAttendances(salesEmployees: any[]) {
   console.log(`✓ Seeded ${attendanceCount} attendances`);
 }
 
+// Helper function to calculate distance between two coordinates (Haversine formula)
+function calculateDistance(
+  lat1: number,
+  lon1: number,
+  lat2: number,
+  lon2: number
+): number {
+  const R = 6371e3; // Earth's radius in meters
+  const φ1 = (lat1 * Math.PI) / 180;
+  const φ2 = (lat2 * Math.PI) / 180;
+  const Δφ = ((lat2 - lat1) * Math.PI) / 180;
+  const Δλ = ((lon2 - lon1) * Math.PI) / 180;
+
+  const a =
+    Math.sin(Δφ / 2) * Math.sin(Δφ / 2) +
+    Math.cos(φ1) * Math.cos(φ2) * Math.sin(Δλ / 2) * Math.sin(Δλ / 2);
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+
+  return R * c; // Distance in meters
+}
+
+// Helper function to generate road-like path points between two locations
+// Uses bezier curve approach to simulate realistic road paths
+function generateRoadLikePath(
+  startLat: number,
+  startLng: number,
+  endLat: number,
+  endLng: number,
+  distanceKm: number
+): Array<{ lat: number; lng: number }> {
+  const points: Array<{ lat: number; lng: number }> = [];
+
+  // Calculate number of waypoints based on distance (approximately every 1-2km)
+  // But limit to reasonable number (max 10 waypoints)
+  const waypointInterval = 1.5; // km
+  const numWaypoints = Math.min(
+    Math.max(2, Math.floor(distanceKm / waypointInterval)),
+    10
+  );
+
+  // Create control points for bezier curve (simulating road curves)
+  const midLat = (startLat + endLat) / 2;
+  const midLng = (startLng + endLng) / 2;
+
+  // Validate inputs
+  if (
+    !Number.isFinite(startLat) || !Number.isFinite(startLng) ||
+    !Number.isFinite(endLat) || !Number.isFinite(endLng) ||
+    !Number.isFinite(distanceKm)
+  ) {
+    return points; // Return empty array if inputs are invalid
+  }
+  
+  // If distance is very small (< 100m), return empty array (no waypoints needed)
+  if (distanceKm < 0.1) {
+    return points;
+  }
+
+  // Add perpendicular offset to create a curved path (simulating road turns)
+  const dx = endLng - startLng;
+  const dy = endLat - startLat;
+  const perpendicularX = -dy;
+  const perpendicularY = dx;
+  const length = Math.sqrt(
+    perpendicularX * perpendicularX + perpendicularY * perpendicularY
+  );
+
+  // Handle case where start and end are the same (length = 0)
+  let controlLat = midLat;
+  let controlLng = midLng;
+  
+  if (length > 0.0001) { // Avoid division by zero
+    // Control point offset (creates a curve, not straight line)
+    const curveAmount = randomFloat(0.1, 0.3); // Varies the curve
+    controlLat = midLat + (perpendicularY / length) * curveAmount * 0.01;
+    controlLng = midLng + (perpendicularX / length) * curveAmount * 0.01;
+  }
+
+  // Generate points along bezier curve
+  for (let i = 1; i < numWaypoints; i++) {
+    const t = i / numWaypoints;
+
+    // Quadratic bezier curve: (1-t)²P₀ + 2(1-t)tP₁ + t²P₂
+    const lat =
+      (1 - t) * (1 - t) * startLat +
+      2 * (1 - t) * t * controlLat +
+      t * t * endLat;
+    const lng =
+      (1 - t) * (1 - t) * startLng +
+      2 * (1 - t) * t * controlLng +
+      t * t * endLng;
+
+    // Validate calculated coordinates
+    if (!Number.isFinite(lat) || !Number.isFinite(lng)) {
+      continue; // Skip invalid points
+    }
+
+    // Add small random variations to simulate road imperfections
+    const finalLat = lat + randomFloat(-0.002, 0.002);
+    const finalLng = lng + randomFloat(-0.002, 0.002);
+    
+    // Final validation
+    if (Number.isFinite(finalLat) && Number.isFinite(finalLng)) {
+      points.push({
+        lat: finalLat,
+        lng: finalLng,
+      });
+    }
+  }
+
+  return points;
+}
+
+async function seedActivityLogs(
+  routes: any[],
+  customers: any[],
+  salesEmployees: any[]
+) {
+  console.log("Seeding activity logs...");
+
+  let activityLogCount = 0;
+  const BATCH_SIZE = 100; // Insert in batches of 100
+  const allActivityLogs: any[] = [];
+
+  for (const route of routes) {
+    const salesEmployee = salesEmployees.find(
+      (e) => e.id === route.salesperson_id
+    );
+    if (!salesEmployee) continue;
+
+    const routeDate = new Date(route.date);
+    routeDate.setHours(8, 0, 0, 0); // Start route at 8 AM
+
+    // Get customers for this route in visit order
+    const { data: routeCustomers } = await supabase
+      .from("route_customers")
+      .select("customer_id, visit_order")
+      .eq("route_id", route.id)
+      .order("visit_order");
+
+    if (!routeCustomers || routeCustomers.length === 0) continue;
+
+    const sortedCustomers = routeCustomers
+      .map((rc) => {
+        const customer = customers.find((c) => c.id === rc.customer_id);
+        return customer ? { customer, visitOrder: rc.visit_order } : null;
+      })
+      .filter(Boolean)
+      .sort((a, b) => (a?.visitOrder || 0) - (b?.visitOrder || 0));
+
+    if (sortedCustomers.length === 0) continue;
+
+    // Get deliveries for this route to check which customers were visited
+    const { data: deliveries } = await supabase
+      .from("deliveries")
+      .select("*")
+      .eq("route_id", route.id);
+
+    const deliveredCustomers = new Set(
+      deliveries
+        ?.filter((d) => d.status === "delivered")
+        .map((d) => d.customer_id) || []
+    );
+
+    let currentTime = new Date(routeDate);
+    const firstCustomer = sortedCustomers[0]?.customer;
+    if (!firstCustomer || !Number.isFinite(firstCustomer.latitude) || !Number.isFinite(firstCustomer.longitude)) {
+      continue; // Skip routes with invalid customer data
+    }
+    
+    let currentLat = firstCustomer.latitude;
+    let currentLng = firstCustomer.longitude;
+    let sequenceNumber = 1; // Track sequence for the day
+
+    // Add starting point (clock-in location or first customer)
+    allActivityLogs.push({
+      employee_id: salesEmployee.id,
+      event_name: "location_update",
+      latitude: currentLat,
+      longitude: currentLng,
+      metadata: {
+        route_id: route.id,
+        sequence_number: sequenceNumber++,
+        is_start: true,
+        description: "Route start",
+      },
+      created_at: currentTime.toISOString(),
+    });
+
+    // Generate activity logs for the route
+    for (let i = 0; i < sortedCustomers.length; i++) {
+      const item = sortedCustomers[i];
+      if (!item) continue;
+
+      const { customer, visitOrder } = item;
+      
+      // Validate customer coordinates
+      if (!customer || !Number.isFinite(customer.latitude) || !Number.isFinite(customer.longitude)) {
+        continue; // Skip invalid customers
+      }
+      
+      const targetLat = customer.latitude;
+      const targetLng = customer.longitude;
+
+      // Validate current position
+      if (!Number.isFinite(currentLat) || !Number.isFinite(currentLng)) {
+        currentLat = targetLat;
+        currentLng = targetLng;
+      }
+
+      // Calculate distance and travel time (assuming 40 km/h average speed)
+      const distance = calculateDistance(
+        currentLat,
+        currentLng,
+        targetLat,
+        targetLng
+      );
+      const distanceKm = distance / 1000;
+      const travelTimeMinutes = Math.max(5, Math.ceil((distanceKm / 40) * 60)); // At least 5 minutes
+
+      // Generate road-like path points (approximately every 1-2km, max 10 waypoints)
+      const waypoints = generateRoadLikePath(
+        currentLat,
+        currentLng,
+        targetLat,
+        targetLng,
+        distanceKm
+      );
+
+      // Collect location updates during travel (spaced by time)
+      const timePerWaypoint = waypoints.length > 0 ? travelTimeMinutes / (waypoints.length + 1) : 0;
+      for (let j = 0; j < waypoints.length; j++) {
+        const point = waypoints[j];
+        
+        // Validate waypoint coordinates
+        if (!point || !Number.isFinite(point.lat) || !Number.isFinite(point.lng)) {
+          continue; // Skip invalid waypoints
+        }
+        
+        const pointTime = new Date(currentTime);
+        pointTime.setMinutes(
+          pointTime.getMinutes() + Math.floor(timePerWaypoint * (j + 1))
+        );
+
+        allActivityLogs.push({
+          employee_id: salesEmployee.id,
+          event_name: "location_update",
+          latitude: point.lat,
+          longitude: point.lng,
+          metadata: {
+            route_id: route.id,
+            customer_id: customer.id,
+            visit_order: visitOrder,
+            sequence_number: sequenceNumber++,
+            is_traveling: true,
+            description: `Traveling to customer #${visitOrder}`,
+          },
+          created_at: pointTime.toISOString(),
+        });
+      }
+
+      // Update current position
+      currentLat = targetLat;
+      currentLng = targetLng;
+      currentTime.setMinutes(currentTime.getMinutes() + travelTimeMinutes);
+
+      // Add arrival point at customer location
+      const arrivalTime = new Date(currentTime);
+      if (Number.isFinite(targetLat) && Number.isFinite(targetLng)) {
+        allActivityLogs.push({
+          employee_id: salesEmployee.id,
+          event_name: "location_update",
+          latitude: targetLat,
+          longitude: targetLng,
+          metadata: {
+            route_id: route.id,
+            customer_id: customer.id,
+            visit_order: visitOrder,
+            sequence_number: sequenceNumber++,
+            is_at_customer: true,
+            description: `Arrived at customer #${visitOrder}`,
+          },
+          created_at: arrivalTime.toISOString(),
+        });
+      }
+
+      // If customer was delivered, add activity logs near customer location
+      if (deliveredCustomers.has(customer.id)) {
+        // Add 1-2 location updates near customer (simulating time spent at location)
+        const timeAtCustomer = randomInt(15, 25); // 15-25 minutes at customer
+        for (let k = 0; k < randomInt(1, 2); k++) {
+          const visitTime = new Date(currentTime);
+          visitTime.setMinutes(
+            visitTime.getMinutes() + Math.floor((timeAtCustomer * (k + 1)) / 3)
+          );
+
+          // Add small random offset to simulate movement within customer location
+          const visitLat = targetLat + randomFloat(-0.0008, 0.0008); // ~100m radius
+          const visitLng = targetLng + randomFloat(-0.0008, 0.0008);
+
+          // Validate coordinates before adding
+          if (Number.isFinite(visitLat) && Number.isFinite(visitLng)) {
+            allActivityLogs.push({
+              employee_id: salesEmployee.id,
+              event_name: "location_update",
+              latitude: visitLat,
+              longitude: visitLng,
+              metadata: {
+                route_id: route.id,
+                customer_id: customer.id,
+                visit_order: visitOrder,
+                sequence_number: sequenceNumber++,
+                is_at_customer: true,
+                near_customer: true,
+                description: `At customer #${visitOrder} location`,
+              },
+              created_at: visitTime.toISOString(),
+            });
+          }
+        }
+
+        // Add COMPLETE_DELIVERY event at customer location
+        const deliveryTime = new Date(currentTime);
+        deliveryTime.setMinutes(
+          deliveryTime.getMinutes() + Math.floor(timeAtCustomer / 2)
+        );
+
+        const deliveryLat = targetLat + randomFloat(-0.0003, 0.0003);
+        const deliveryLng = targetLng + randomFloat(-0.0003, 0.0003);
+        
+        // Validate coordinates before adding
+        if (Number.isFinite(deliveryLat) && Number.isFinite(deliveryLng)) {
+          allActivityLogs.push({
+            employee_id: salesEmployee.id,
+            event_name: "COMPLETE_DELIVERY",
+            latitude: deliveryLat,
+            longitude: deliveryLng,
+            metadata: {
+              route_id: route.id,
+              customer_id: customer.id,
+              visit_order: visitOrder,
+              sequence_number: sequenceNumber++,
+              delivery_completed: true,
+              description: `Completed delivery to customer #${visitOrder}`,
+            },
+            created_at: deliveryTime.toISOString(),
+          });
+        }
+
+        currentTime.setMinutes(currentTime.getMinutes() + timeAtCustomer);
+      } else {
+        // For pending deliveries, add a single location update (passed by but didn't stop)
+        const passTime = new Date(currentTime);
+        passTime.setMinutes(passTime.getMinutes() + 2);
+
+        const passLat = targetLat + randomFloat(-0.003, 0.003); // Further away (didn't stop)
+        const passLng = targetLng + randomFloat(-0.003, 0.003);
+        
+        // Validate coordinates before adding
+        if (Number.isFinite(passLat) && Number.isFinite(passLng)) {
+          allActivityLogs.push({
+            employee_id: salesEmployee.id,
+            event_name: "location_update",
+            latitude: passLat,
+            longitude: passLng,
+            metadata: {
+              route_id: route.id,
+              customer_id: customer.id,
+              visit_order: visitOrder,
+              sequence_number: sequenceNumber++,
+              is_at_customer: false,
+              near_customer: false,
+              description: `Passed customer #${visitOrder} (pending)`,
+            },
+            created_at: passTime.toISOString(),
+          });
+        }
+
+        currentTime.setMinutes(currentTime.getMinutes() + 5);
+      }
+    }
+
+    // Add ending point (last location of the day)
+    const endTime = new Date(currentTime);
+    endTime.setHours(17, 0, 0, 0); // End around 5 PM
+    
+    // Validate coordinates before adding end point
+    if (Number.isFinite(currentLat) && Number.isFinite(currentLng)) {
+      allActivityLogs.push({
+        employee_id: salesEmployee.id,
+        event_name: "location_update",
+        latitude: currentLat,
+        longitude: currentLng,
+        metadata: {
+          route_id: route.id,
+          sequence_number: sequenceNumber++,
+          is_end: true,
+          description: "Route end",
+        },
+        created_at: endTime.toISOString(),
+      });
+    }
+  }
+
+  // Batch insert activity logs
+  console.log(
+    `  Inserting ${allActivityLogs.length} activity logs in batches of ${BATCH_SIZE}...`
+  );
+
+  for (let i = 0; i < allActivityLogs.length; i += BATCH_SIZE) {
+    const batch = allActivityLogs.slice(i, i + BATCH_SIZE);
+
+    try {
+      await retryOperation(async () => {
+        const { error } = await supabase.from("activity_logs").insert(batch);
+        if (error) throw error;
+      });
+      activityLogCount += batch.length;
+      if (
+        (i + BATCH_SIZE) % 500 === 0 ||
+        i + BATCH_SIZE >= allActivityLogs.length
+      ) {
+        console.log(
+          `  Progress: ${Math.min(i + BATCH_SIZE, allActivityLogs.length)}/${
+            allActivityLogs.length
+          } logs inserted`
+        );
+      }
+    } catch (error) {
+      console.error(
+        `Error inserting batch ${Math.floor(i / BATCH_SIZE) + 1}:`,
+        error
+      );
+      // Continue with next batch even if one fails
+    }
+  }
+
+  console.log(`✓ Seeded ${activityLogCount} activity logs`);
+}
+
 async function main() {
   console.log("Starting seed process...\n");
 
@@ -809,6 +1249,7 @@ async function main() {
     const routes = await seedRoutes(salesEmployees, customers);
     await seedDeliveries(routes, customers);
     await seedAttendances(salesEmployees);
+    await seedActivityLogs(routes, customers, salesEmployees);
 
     console.log("\n✓ Seed process completed successfully!");
     console.log("\nSummary:");
@@ -823,6 +1264,7 @@ async function main() {
     console.log(
       `- Attendances: Generated for ${salesEmployees.length} sales employees over 8 days`
     );
+    console.log(`- Activity Logs: Generated for routes`);
   } catch (error) {
     console.error("Seed process failed:", error);
     process.exit(1);

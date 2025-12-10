@@ -5,6 +5,7 @@ import type {
   Route,
   Delivery,
   Attendance,
+  ActivityLog,
 } from "./mock-data"
 
 export const api = {
@@ -485,5 +486,37 @@ export const api = {
           }
         : undefined,
     }
+  },
+
+  // Activity Logs
+  getActivityLogsByEmployeeAndDate: async (
+    employeeId: string,
+    date: string
+  ): Promise<ActivityLog[]> => {
+    // Parse date to get start and end of day
+    const startDate = new Date(date)
+    startDate.setHours(0, 0, 0, 0)
+    const endDate = new Date(date)
+    endDate.setHours(23, 59, 59, 999)
+
+    const { data, error } = await supabase
+      .from("activity_logs")
+      .select("*")
+      .eq("employee_id", employeeId)
+      .gte("created_at", startDate.toISOString())
+      .lte("created_at", endDate.toISOString())
+      .order("created_at", { ascending: true })
+
+    if (error) throw error
+
+    return (data || []).map((log) => ({
+      id: log.id,
+      employeeId: log.employee_id,
+      eventName: log.event_name,
+      latitude: Number(log.latitude),
+      longitude: Number(log.longitude),
+      metadata: log.metadata || undefined,
+      createdAt: log.created_at,
+    }))
   },
 }

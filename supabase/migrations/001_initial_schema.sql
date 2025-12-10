@@ -84,6 +84,17 @@ CREATE TABLE attendances (
   UNIQUE(employee_id, date)
 );
 
+-- Create activity_logs table
+CREATE TABLE activity_logs (
+  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  employee_id UUID NOT NULL REFERENCES employees(id) ON DELETE CASCADE,
+  event_name TEXT NOT NULL,
+  latitude NUMERIC(10, 8) NOT NULL,
+  longitude NUMERIC(11, 8) NOT NULL,
+  metadata JSONB,
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
 -- Create indexes for performance
 CREATE INDEX idx_employees_role ON employees(role);
 CREATE INDEX idx_employees_auth_user_id ON employees(auth_user_id);
@@ -97,6 +108,9 @@ CREATE INDEX idx_deliveries_customer_id ON deliveries(customer_id);
 CREATE INDEX idx_deliveries_status ON deliveries(status);
 CREATE INDEX idx_attendances_employee_id ON attendances(employee_id);
 CREATE INDEX idx_attendances_date ON attendances(date);
+CREATE INDEX idx_activity_logs_employee_id ON activity_logs(employee_id);
+CREATE INDEX idx_activity_logs_created_at ON activity_logs(created_at);
+CREATE INDEX idx_activity_logs_event_name ON activity_logs(event_name);
 
 -- Enable Row Level Security
 ALTER TABLE regions ENABLE ROW LEVEL SECURITY;
@@ -106,6 +120,7 @@ ALTER TABLE routes ENABLE ROW LEVEL SECURITY;
 ALTER TABLE route_customers ENABLE ROW LEVEL SECURITY;
 ALTER TABLE deliveries ENABLE ROW LEVEL SECURITY;
 ALTER TABLE attendances ENABLE ROW LEVEL SECURITY;
+ALTER TABLE activity_logs ENABLE ROW LEVEL SECURITY;
 
 -- RLS Policies for regions (everyone can read)
 CREATE POLICY "Regions are viewable by everyone" ON regions
@@ -228,5 +243,27 @@ CREATE POLICY "Employees can manage their own attendances" ON attendances
     employee_id IN (
       SELECT id FROM employees WHERE auth_user_id = auth.uid()
     )
+  );
+
+-- RLS Policies for activity_logs
+CREATE POLICY "Activity logs are viewable by authenticated users" ON activity_logs
+  FOR SELECT USING (auth.role() = 'authenticated');
+
+CREATE POLICY "Admins can manage all activity logs" ON activity_logs
+  FOR ALL USING (
+    EXISTS (
+      SELECT 1 FROM employees
+      WHERE auth_user_id = auth.uid() AND role = 'admin'
+    )
+  );
+
+CREATE POLICY "Employees can insert their own activity logs" ON activity_logs
+  FOR INSERT WITH CHECK (
+    auth.uid() IN (SELECT auth_user_id FROM employees WHERE id = employee_id)
+  );
+
+CREATE POLICY "Employees can view their own activity logs" ON activity_logs
+  FOR SELECT USING (
+    auth.uid() IN (SELECT auth_user_id FROM employees WHERE id = employee_id)
   );
 

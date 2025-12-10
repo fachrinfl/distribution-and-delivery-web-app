@@ -56,6 +56,16 @@ export interface Attendance {
   };
 }
 
+export interface ActivityLog {
+  id: string;
+  employeeId: string;
+  eventName: string;
+  latitude: number;
+  longitude: number;
+  metadata?: Record<string, any>;
+  createdAt: string;
+}
+
 // Mock Data
 export const mockEmployees: Employee[] = [
   {
